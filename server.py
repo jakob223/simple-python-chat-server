@@ -1,7 +1,7 @@
 # Tcp Chat server
 
 import socket, select
-
+import random
 
 class Server(object):
     # List to keep track of socket descriptors
@@ -11,6 +11,8 @@ class Server(object):
 
     def __init__(self):
         self.user_name_dict = {}
+        self.victim = 0
+        self.bodysnatcher = 0
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.set_up_connections()
         self.client_connect()
@@ -23,6 +25,32 @@ class Server(object):
 
         # Add server socket to the list of readable connections
         self.CONNECTION_LIST.append(self.server_socket)
+
+        
+    def choose_bodysnatcher_and_victim(self):
+        options = [sock for sock in self.CONNECTION_LIST if sock != self.server_socket]
+        self.bodysnatcher, self.victim = random.sample(options, 2)
+        bodysnatcher_username = self.user_name_dict[self.bodysnatcher]
+        victim_username = self.user_name_dict[self.victim].username
+        self.victims = set()
+        self.victims.add(self.victim)
+        
+        self.bodysnatcher.send("You're the bodysnatcher. You've snatched %s's body. To communicate with them secretly, send a message starting with '$'.\n\n" % victim_username)
+        self.victim.send("You've been bodysnatched. Any messages you send will go only to the bodysnatcher.\n\n")
+    
+    def choose_new_victim(self):
+        options = [sock for sock in self.CONNECTION_LIST if sock != self.server_socket]
+        options = list(set(options) - self.victims - set([self.bodysnatcher]))
+        if len(options) == 0:
+            self.broadcast_data(0,"GAME OVER\n\n")
+            return
+        self.victim = random.choice(options)
+        self.victims.add(self.victim)
+        victim_username = self.user_name_dict[self.victim].username
+        
+        self.bodysnatcher.send("Your new victim is %s\n\n" % victim_username)
+        self.victim.send("You've been bodysnatched. Any messages you send will go only to the bodysnatcher.\n\n")
+        
 
     # Function to broadcast chat messages to all connected clients
     def broadcast_data(self, sock, message):
@@ -59,7 +87,7 @@ class Server(object):
                 # Some incoming message from a client
                 else:
                     # Data recieved from client, process it
-                    try:
+                    # try:
                         # In Windows, sometimes when a TCP program closes abruptly,
                         # a "Connection reset by peer" exception will be thrown
                         data = sock.recv(self.RECV_BUFFER)
@@ -67,21 +95,36 @@ class Server(object):
                             if self.user_name_dict[sock].username is None:
                                 self.set_client_user_name(data, sock)
                             else:
-                                self.broadcast_data(sock, "\r" + '<' + self.user_name_dict[sock].username + '> ' + data)
+                                if data[:7]=="NEWGAME":
+                                    self.broadcast_data(sock,"NEW GAME---------------------------------------\n\n\n\n-----------------------------------------\n")
+                                    self.choose_bodysnatcher_and_victim()
+                                elif data[:9]=="NEWVICTIM":
+                                    self.broadcast_data(sock,"NEW VICTIM---------------------------------------")
+                                    self.choose_new_victim()
+                                elif sock == self.victim:
+                                    self.bodysnatcher.send("<VICTIM> " + data)
+                                elif sock == self.bodysnatcher:
+                                    if data[0] == "$":
+                                        self.victim.send('<BODYSNATCHER> ' + data[1:])
+                                    else:
+                                        self.broadcast_data(sock, "\r" + '<' + self.user_name_dict[self.victim].username + '> ' + data)
+                                else:
+                                    self.broadcast_data(sock, "\r" + '<' + self.user_name_dict[sock].username + '> ' + data)
 
-                    except:
-                        self.broadcast_data(sock, "Client (%s, %s) is offline" % addr)
-                        print "Client (%s, %s) is offline" % addr
-                        sock.close()
-                        self.CONNECTION_LIST.remove(sock)
-                        continue
+                    # except:
+         #
+         #                self.broadcast_data(sock, "Client (%s, %s) is offline" % addr)
+         #                print "Client (%s, %s) is offline" % addr
+         #                sock.close()
+         #                self.CONNECTION_LIST.remove(sock)
+         #                continue
 
         self.server_socket.close()
 
     def set_client_user_name(self, data, sock):
         self.user_name_dict[sock].username = data.strip()
         self.send_data_to(sock, data.strip() + ', you are now in the chat room\n')
-        self.send_data_to_all_regesterd_clents(sock, data.strip() + ', has joined the cat room\n')
+        self.send_data_to_all_regesterd_clents(sock, data.strip() + ' has joined the chat room\n')
 
     def setup_connection(self):
         sockfd, addr = self.server_socket.accept()
